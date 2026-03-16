@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-frontend/
+data/
+.env
+*.db
+*.db-journal
+nul
+scripts/

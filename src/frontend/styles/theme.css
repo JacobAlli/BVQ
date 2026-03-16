@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bvq-bg: #0a0a0f;
+  --color-bvq-surface: #12121a;
+  --color-bvq-card: #1a1a26;
+  --color-bvq-border: #2a2a3a;
+  --color-bvq-accent: #00a8ff;
+  --color-bvq-accent-dim: #0080cc;
+  --color-bvq-green: #00e676;
+  --color-bvq-yellow: #ffab00;
+  --color-bvq-red: #ff1744;
+  --color-bvq-text: #e0e0e0;
+  --color-bvq-text-dim: #888899;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+/* Glow effect for accent elements */
+.glow-accent {
+  box-shadow: 0 0 12px rgba(0, 168, 255, 0.3);
+}
+
+.glow-accent-hover:hover {
+  box-shadow: 0 0 20px rgba(0, 168, 255, 0.5);
+}
+
+/* Rank tier colors */
+.rank-bronze { color: #cd7f32; }
+.rank-silver { color: #c0c0c0; }
+.rank-gold { color: #ffd700; }
+.rank-platinum { color: #00c8ff; }
+.rank-diamond { color: #b366ff; }
+.rank-champion { color: #ff66aa; }
+.rank-gc { color: #ff4444; }
+.rank-ssl { color: #ffffff; text-shadow: 0 0 8px rgba(255,255,255,0.6); }
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--color-bvq-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-bvq-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-bvq-accent-dim); }
+
+/* OBS overlay transparent mode */
+.obs-overlay {
+  background: transparent !important;
+}

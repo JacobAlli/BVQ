@@ -1,0 +1,40 @@
+{
+  "name": "balanced-viewer-queue",
+  "version": "1.0.0",
+  "description": "Twitch queue bot with MMR-based team balancing for Rocket League",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc && vite build",
+    "build:server": "tsc",
+    "build:frontend": "vite build",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "dev:frontend": "vite dev"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/static": "^9.0.0",
+    "better-sqlite3": "^11.7.0",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.8.2",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.13.1",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
+    "tmi.js": "^1.8.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.1",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/tmi.js": "^1.8.6",
+    "@vitejs/plugin-react": "^4.7.0",
+    "tailwindcss": "^4.2.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.4.1"
+  }
+}
