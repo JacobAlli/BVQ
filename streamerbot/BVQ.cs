@@ -38,20 +38,20 @@ public class CPHInline
 
     class BalanceResult
     {
-        public List<TeamPlayer> TeamA { get; set; }
-        public List<TeamPlayer> TeamB { get; set; }
-        public int TeamAAvgMmr { get; set; }
-        public int TeamBAvgMmr { get; set; }
+        public List<TeamPlayer> Blue { get; set; }
+        public List<TeamPlayer> Orange { get; set; }
+        public int BlueAvgMmr { get; set; }
+        public int OrangeAvgMmr { get; set; }
         public int MmrDiff { get; set; }
     }
 
     class MatchRecord
     {
         public string Format { get; set; }
-        public List<TeamPlayer> TeamA { get; set; }
-        public List<TeamPlayer> TeamB { get; set; }
-        public int TeamAAvg { get; set; }
-        public int TeamBAvg { get; set; }
+        public List<TeamPlayer> Blue { get; set; }
+        public List<TeamPlayer> Orange { get; set; }
+        public int BlueAvg { get; set; }
+        public int OrangeAvg { get; set; }
         public int Diff { get; set; }
         public long CreatedAt { get; set; }
     }
@@ -200,25 +200,26 @@ public class CPHInline
         CPH.TryGetArg("command", out string command);
         CPH.TryGetArg("rawInput", out string rawInput);
         CPH.TryGetArg("user", out string user);
-        CPH.TryGetArg("isModerator", out bool isMod);
-        CPH.TryGetArg("isBroadcaster", out bool isBroadcaster);
+        CPH.TryGetArg("role", out int role);
 
-        bool isPrivileged = isMod || isBroadcaster;
+        // role: 1=Viewer, 2=VIP, 3=Moderator, 4=Broadcaster
+        bool isPrivileged = role >= 3;
         string userLower = (user ?? "").ToLower().Trim();
         string input = (rawInput ?? "").Trim();
 
         switch (command?.ToLower())
         {
-            case "!register": return HandleRegister(userLower, input);
-            case "!join":     return HandleJoin(userLower, input);
+            case "!register": return HandleRegister(userLower, input, isPrivileged);
+            case "!join":     return HandleJoin(userLower);
             case "!leave":    return HandleLeave(userLower);
             case "!pos":      return HandlePos(userLower);
             case "!rank":     return HandleRank(userLower);
             case "!queue":    return HandleQueue(userLower, input, isPrivileged);
             case "!balance":  return HandleBalance(userLower, isPrivileged);
-            case "!next":     return HandleNext(userLower, isPrivileged);
+            case "!next":     return HandleNext(userLower, input, isPrivileged);
             case "!reroll":   return HandleReroll(userLower, isPrivileged);
             case "!format":   return HandleFormat(userLower, input, isPrivileged);
+            case "!lobby":    return HandleLobby(userLower);
             case "!kick":     return HandleKick(userLower, input, isPrivileged);
             case "!mmr":      return HandleMmrLookup(userLower, input, isPrivileged);
             case "!setmmr":   return HandleSetMmr(userLower, input, isPrivileged);
@@ -402,21 +403,21 @@ public class CPHInline
             }
         }
 
-        var teamAPlayers = bestTeamA.Select(i => players[i]).ToList();
+        var bluePlayers = bestTeamA.Select(i => players[i]).ToList();
         var bestSet = new HashSet<int>(bestTeamA);
-        var teamBPlayers = indices.Where(i => !bestSet.Contains(i))
-                                  .Select(i => players[i]).ToList();
+        var orangePlayers = indices.Where(i => !bestSet.Contains(i))
+                                   .Select(i => players[i]).ToList();
 
-        int teamAAvg = (int)Math.Round(teamAPlayers.Average(p => (double)p.Mmr));
-        int teamBAvg = (int)Math.Round(teamBPlayers.Average(p => (double)p.Mmr));
+        int blueAvg = (int)Math.Round(bluePlayers.Average(p => (double)p.Mmr));
+        int orangeAvg = (int)Math.Round(orangePlayers.Average(p => (double)p.Mmr));
 
         return new BalanceResult
         {
-            TeamA = teamAPlayers,
-            TeamB = teamBPlayers,
-            TeamAAvgMmr = teamAAvg,
-            TeamBAvgMmr = teamBAvg,
-            MmrDiff = Math.Abs(teamAAvg - teamBAvg)
+            Blue = bluePlayers,
+            Orange = orangePlayers,
+            BlueAvgMmr = blueAvg,
+            OrangeAvgMmr = orangeAvg,
+            MmrDiff = Math.Abs(blueAvg - orangeAvg)
         };
     }
 
@@ -453,7 +454,11 @@ public class CPHInline
 
         Player player = _players[username];
 
-        // 1. Check cache (24h TTL)
+        // 1. Manual MMR (set by mod/broadcaster) — always takes priority
+        if (player.MmrSource == "manual" && player.PeakMmr.HasValue)
+            return player.PeakMmr.Value;
+
+        // 2. Check cache (24h TTL)
         string cacheKey = player.GameId.ToLower();
         if (_mmrCache.ContainsKey(cacheKey))
         {
@@ -463,7 +468,7 @@ public class CPHInline
                 return cached.PeakMmr;
         }
 
-        // 2. Try TRN API
+        // 3. Try TRN API
         TrnResult result = LookupEpicProfile(player.GameId);
         if (result.Mmr.HasValue)
         {
@@ -480,11 +485,11 @@ public class CPHInline
             return result.Mmr.Value;
         }
 
-        // 3. Self-reported or previously stored MMR
+        // 4. Previously stored MMR
         if (player.PeakMmr.HasValue)
             return player.PeakMmr.Value;
 
-        // 4. Default
+        // 5. Default
         return _settings.DefaultMmr;
     }
 
@@ -609,7 +614,7 @@ public class CPHInline
     //  COMMAND HANDLERS
     // ══════════════════════════════════════════════════════════════
 
-    bool HandleRegister(string user, string input)
+    bool HandleRegister(string user, string input, bool isPrivileged)
     {
         if (string.IsNullOrEmpty(input))
         {
@@ -617,8 +622,31 @@ public class CPHInline
             return true;
         }
 
+        // Mod override: !register <username> <EpicID>
+        string[] parts = input.Split(new[] { ' ' }, 2, StringSplitOptions.RemoveEmptyEntries);
+        string targetUser = user;
+        string gameId;
+
+        if (isPrivileged && parts.Length >= 2)
+        {
+            // Mods can register/re-register on behalf of someone
+            targetUser = parts[0].ToLower().TrimStart('@');
+            gameId = parts[1].Trim();
+        }
+        else
+        {
+            // Viewer self-registration
+            if (_players.ContainsKey(user))
+            {
+                Say("@" + user + " You're already registered as " +
+                    _players[user].GameId + ". Ask a mod to update your Epic ID if needed.");
+                return true;
+            }
+
+            gameId = input.Trim();
+        }
+
         // Handle legacy "platform:id" format — strip the prefix
-        string gameId = input.Trim();
         if (gameId.StartsWith("epic:", StringComparison.OrdinalIgnoreCase) ||
             gameId.StartsWith("steam:", StringComparison.OrdinalIgnoreCase) ||
             gameId.StartsWith("psn:", StringComparison.OrdinalIgnoreCase) ||
@@ -629,7 +657,7 @@ public class CPHInline
 
         if (string.IsNullOrEmpty(gameId))
         {
-            Say("@" + user + " You need to provide your Epic ID.");
+            Say("@" + user + " You need to provide an Epic ID.");
             return true;
         }
 
@@ -639,32 +667,33 @@ public class CPHInline
         if (result.ProfileFound == false)
         {
             Say("@" + user + " Could not find \"" + gameId +
-                "\" on Tracker Network. Make sure you're using your exact Epic Games display name.");
+                "\" on Tracker Network. Make sure you're using the exact Epic Games display name.");
             return true;
         }
 
-        if (_players.ContainsKey(user))
+        bool isUpdate = _players.ContainsKey(targetUser);
+        if (isUpdate)
         {
-            _players[user].Platform = "epic";
-            _players[user].GameId = gameId;
+            _players[targetUser].Platform = "epic";
+            _players[targetUser].GameId = gameId;
         }
         else
         {
-            _players[user] = new Player
+            _players[targetUser] = new Player
             {
-                Username = user,
+                Username = targetUser,
                 Platform = "epic",
                 GameId = gameId,
                 MmrSource = "none"
             };
         }
 
-        // If we got MMR from TRN, save it now
-        if (result.Mmr.HasValue)
+        // If we got MMR from TRN, save it (only if not manually set)
+        if (result.Mmr.HasValue && _players[targetUser].MmrSource != "manual")
         {
-            _players[user].PeakMmr = result.Mmr.Value;
-            _players[user].MmrSource = "api";
-            _players[user].MmrLastUpdated = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            _players[targetUser].PeakMmr = result.Mmr.Value;
+            _players[targetUser].MmrSource = "api";
+            _players[targetUser].MmrLastUpdated = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
             string cacheKey = gameId.ToLower();
             _mmrCache[cacheKey] = new MmrCacheEntry
@@ -679,35 +708,22 @@ public class CPHInline
 
         string mmrMsg = result.Mmr.HasValue
             ? " MMR: " + result.Mmr.Value
-            : result.ProfileFound == null
-                ? " (could not verify — API may be busy, try !mmr later)"
-                : " (no Ranked Doubles 2v2 data found)";
-        Say("@" + user + " Registered as " + gameId + "!" + mmrMsg);
+            : " (no MMR found — a mod can set it with !setmmr)";
+
+        if (targetUser != user)
+            Say("@" + user + " Registered " + targetUser + " as " + gameId + "!" + mmrMsg);
+        else
+            Say("@" + user + " Registered as " + gameId + "!" + mmrMsg);
         return true;
     }
 
-    bool HandleJoin(string user, string input)
+    bool HandleJoin(string user)
     {
         if (!_players.ContainsKey(user))
         {
             Say("@" + user + " You need to register first! " +
                 "Use: !register <EpicID>");
             return true;
-        }
-
-        // Optional rank self-report
-        if (!string.IsNullOrEmpty(input))
-        {
-            string firstArg = input.Split(' ')[0];
-            int? mmr = ParseRankToMmr(firstArg);
-            if (mmr.HasValue)
-            {
-                _players[user].PeakMmr = mmr.Value;
-                _players[user].MmrSource = "self_report";
-                _players[user].MmrLastUpdated =
-                    DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                SavePlayers();
-            }
         }
 
         if (!_settings.QueueOpen)
@@ -779,7 +795,7 @@ public class CPHInline
         Player player = _players[user];
         if (!player.PeakMmr.HasValue)
         {
-            Say("@" + user + " No MMR on file. Join with a rank (!join C3) or wait for API lookup.");
+            Say("@" + user + " No MMR on file. A mod can set it with !setmmr, or it will be fetched from Tracker Network.");
             return true;
         }
 
@@ -787,6 +803,22 @@ public class CPHInline
                          player.MmrSource == "self_report" ? "self-reported" :
                          player.MmrSource == "manual" ? "manual" : "unknown";
         Say("@" + user + " Your MMR: " + player.PeakMmr + " (" + source + ")");
+        return true;
+    }
+
+    bool HandleLobby(string user)
+    {
+        if (_lastBalance == null || _lastBalance.Result == null)
+        {
+            Say("@" + user + " No active lobby right now.");
+            return true;
+        }
+
+        var blueNames = _lastBalance.Result.Blue.Select(p => p.Username + "(" + p.Mmr + ")");
+        var orangeNames = _lastBalance.Result.Orange.Select(p => p.Username + "(" + p.Mmr + ")");
+
+        Say("🔷 Blue: " + string.Join(", ", blueNames) + " | " +
+            "🔶 Orange: " + string.Join(", ", orangeNames));
         return true;
     }
 
@@ -863,7 +895,7 @@ public class CPHInline
         return DoRotateAndBalance();
     }
 
-    bool HandleNext(string user, bool isPrivileged)
+    bool HandleNext(string user, string input, bool isPrivileged)
     {
         if (!isPrivileged)
         {
@@ -871,7 +903,12 @@ public class CPHInline
             return true;
         }
 
-        return DoRotateAndBalance();
+        string sub = string.IsNullOrEmpty(input) ? "" : input.Split(' ')[0].ToLower();
+
+        if (sub == "blue" || sub == "orange")
+            return DoKothRotateAndBalance(sub);
+        else
+            return DoRotateAndBalance();
     }
 
     bool DoRotateAndBalance()
@@ -915,6 +952,91 @@ public class CPHInline
         return true;
     }
 
+    bool DoKothRotateAndBalance(string winnerTeam)
+    {
+        if (_lastBalance == null || _lastBalance.Result == null)
+        {
+            Say("No active lobby. Use !balance to start.");
+            return true;
+        }
+
+        string format = _settings.DefaultFormat;
+        int teamSize = GetTeamSize(format);
+
+        // Determine which team stays (winners) and which rotates out (losers)
+        List<TeamPlayer> winners = winnerTeam == "blue"
+            ? _lastBalance.Result.Blue
+            : _lastBalance.Result.Orange;
+        List<TeamPlayer> losers = winnerTeam == "blue"
+            ? _lastBalance.Result.Orange
+            : _lastBalance.Result.Blue;
+
+        // Rotate losers to back of queue
+        int maxPos = _queue.Count > 0 ? _queue.Max(e => e.Position) : 0;
+        int nextPos = maxPos + 1;
+        foreach (var loser in losers)
+        {
+            var entry = _queue.FirstOrDefault(e => e.Username == loser.Username && e.Status == "active");
+            if (entry != null)
+            {
+                entry.Status = "waiting";
+                entry.Position = nextPos++;
+                entry.GamesPlayedSession++;
+            }
+        }
+        CompactPositions();
+
+        // Winners stay active — verify they're still in queue
+        var stayingPlayers = new List<string>();
+        foreach (var winner in winners)
+        {
+            var entry = _queue.FirstOrDefault(e => e.Username == winner.Username && e.Status == "active");
+            if (entry != null)
+                stayingPlayers.Add(winner.Username);
+        }
+
+        // How many new players do we need?
+        int totalSlots = GetTotalSlots(format);
+        int slotsNeeded = totalSlots - stayingPlayers.Count;
+        int waitingCount = GetWaitingCount();
+
+        if (waitingCount < slotsNeeded)
+        {
+            Say("Not enough players in queue. Need " + slotsNeeded +
+                " more, have " + waitingCount + " waiting.");
+            return true;
+        }
+
+        // Pull new players from queue
+        var newBatch = PullNextBatch(slotsNeeded);
+        var allUsernames = stayingPlayers
+            .Concat(newBatch.Select(e => e.Username))
+            .ToList();
+
+        // Resolve MMR and balance all players together
+        var mmrMap = ResolveAllMmr(allUsernames);
+        var players = allUsernames.Select(u => new TeamPlayer
+        {
+            Username = u,
+            Mmr = mmrMap[u]
+        }).ToList();
+
+        BalanceResult result = BalanceTeams(players, format);
+
+        _lastBalance = new LastBalanceData
+        {
+            Players = players,
+            Format = format,
+            Result = result
+        };
+
+        string winLabel = winnerTeam == "blue" ? "🔷 Blue" : "🔶 Orange";
+        Say(winLabel + " wins! Rotating in new challengers...");
+        RecordMatch(format, result);
+        PostTeams(result);
+        return true;
+    }
+
     bool HandleReroll(string user, bool isPrivileged)
     {
         if (!isPrivileged)
@@ -929,9 +1051,50 @@ public class CPHInline
             return true;
         }
 
+        // Check for missing players (kicked or left since last balance)
+        var currentPlayers = new List<TeamPlayer>();
+        var missing = new List<string>();
+        foreach (var p in _lastBalance.Players)
+        {
+            var entry = GetEntry(p.Username);
+            if (entry != null && entry.Status == "active")
+                currentPlayers.Add(p);
+            else
+                missing.Add(p.Username);
+        }
+
+        // Pull replacements from queue for missing players
+        if (missing.Count > 0)
+        {
+            int waitingCount = GetWaitingCount();
+            int replacements = Math.Min(missing.Count, waitingCount);
+
+            if (replacements > 0)
+            {
+                var newBatch = PullNextBatch(replacements);
+                var newUsernames = newBatch.Select(e => e.Username).ToList();
+                var newMmr = ResolveAllMmr(newUsernames);
+
+                foreach (string u in newUsernames)
+                {
+                    currentPlayers.Add(new TeamPlayer { Username = u, Mmr = newMmr[u] });
+                }
+            }
+
+            if (currentPlayers.Count < GetTotalSlots(_lastBalance.Format))
+            {
+                Say("Removed " + string.Join(", ", missing) +
+                    " but not enough players in queue to fill the lobby. Need " +
+                    (GetTotalSlots(_lastBalance.Format) - currentPlayers.Count) + " more.");
+                return true;
+            }
+
+            Say("Replaced " + string.Join(", ", missing) + " with players from queue.");
+        }
+
         // Shuffle players for a different split
         var rng = new Random();
-        var shuffled = _lastBalance.Players.OrderBy(_ => rng.Next()).ToList();
+        var shuffled = currentPlayers.OrderBy(_ => rng.Next()).ToList();
 
         BalanceResult result = BalanceTeams(shuffled, _lastBalance.Format);
 
@@ -943,7 +1106,7 @@ public class CPHInline
         };
 
         RecordMatch(_lastBalance.Format, result);
-        Say("Rerolled teams!");
+        if (missing.Count == 0) Say("Rerolled teams!");
         PostTeams(result);
         return true;
     }
@@ -1041,9 +1204,15 @@ public class CPHInline
         }
 
         string target = parts[0].ToLower().TrimStart('@');
-        if (!int.TryParse(parts[1], out int mmr) || mmr < 0 || mmr > 3000)
+        int mmr;
+        int? rankMmr = ParseRankToMmr(parts[1]);
+        if (rankMmr.HasValue)
         {
-            Say("@" + user + " MMR must be a number between 0 and 3000.");
+            mmr = rankMmr.Value;
+        }
+        else if (!int.TryParse(parts[1], out mmr) || mmr < 0 || mmr > 3000)
+        {
+            Say("@" + user + " Usage: !setmmr <username> <mmr or rank> — e.g. !setmmr user 1200 or !setmmr user gc1");
             return true;
         }
 
@@ -1070,10 +1239,10 @@ public class CPHInline
         _matches.Add(new MatchRecord
         {
             Format = format,
-            TeamA = result.TeamA,
-            TeamB = result.TeamB,
-            TeamAAvg = result.TeamAAvgMmr,
-            TeamBAvg = result.TeamBAvgMmr,
+            Blue = result.Blue,
+            Orange = result.Orange,
+            BlueAvg = result.BlueAvgMmr,
+            OrangeAvg = result.OrangeAvgMmr,
             Diff = result.MmrDiff,
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
         });
@@ -1087,13 +1256,13 @@ public class CPHInline
 
     void PostTeams(BalanceResult result)
     {
-        var teamANames = result.TeamA.Select(p => p.Username + "(" + p.Mmr + ")");
-        var teamBNames = result.TeamB.Select(p => p.Username + "(" + p.Mmr + ")");
+        var blueNames = result.Blue.Select(p => p.Username + "(" + p.Mmr + ")");
+        var orangeNames = result.Orange.Select(p => p.Username + "(" + p.Mmr + ")");
 
-        Say("Team A [avg " + result.TeamAAvgMmr + "]: " +
-            string.Join(", ", teamANames) + " | " +
-            "Team B [avg " + result.TeamBAvgMmr + "]: " +
-            string.Join(", ", teamBNames) + " | " +
+        Say("🔷 Blue [avg " + result.BlueAvgMmr + "]: " +
+            string.Join(", ", blueNames) + " | " +
+            "🔶 Orange [avg " + result.OrangeAvgMmr + "]: " +
+            string.Join(", ", orangeNames) + " | " +
             "Diff: " + result.MmrDiff);
     }
 }
