@@ -201,9 +201,10 @@ public class CPHInline
         CPH.TryGetArg("rawInput", out string rawInput);
         CPH.TryGetArg("user", out string user);
         CPH.TryGetArg("role", out int role);
+        CPH.TryGetArg("isModerator", out bool isMod);
+        CPH.TryGetArg("isBroadcaster", out bool isBroadcaster);
 
-        // role: 1=Viewer, 2=VIP, 3=Moderator, 4=Broadcaster
-        bool isPrivileged = role >= 3;
+        bool isPrivileged = role >= 3 || isMod || isBroadcaster;
         string userLower = (user ?? "").ToLower().Trim();
         string input = (rawInput ?? "").Trim();
 
